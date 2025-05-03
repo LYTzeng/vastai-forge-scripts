@@ -1,0 +1,24 @@
+forge:
+  commit: e53cf13e # specify your forge commit. if you need to use the default one, remove this attribute.
+
+extensions: # git repositories of extensions
+  - https://github.com/Bing-su/adetailer.git
+
+models: # your checkpoint/model here. supports civitai and hugging face models
+  - https://civitai.com/api/download/models/xxxxxx
+  - https://huggingface.co/xxxx/xxxx/resolve/main/model-name.safetensors
+
+loras: # replace below with your loras. supports civitai and hugging face models
+  - https://civitai.com/api/download/models/xxxxxx
+  - https://huggingface.co/xxxx/xxxx/resolve/main/model-name.safetensors
+
+esrgan: # your upscalers here. supports civitai and hugging face models
+  - https://huggingface.co/utnah/esrgan/resolve/main/4x-AnimeSharp.pth
+  
+adetailer: # your adetailer models. supports civitai and hugging face models
+
+controlnet: # your controlnet models. supports civitai and hugging face models
+
+unet: # supports civitai and hugging face models
+
+vae: # your vae here. supports civitai and hugging face models
