@@ -4,16 +4,19 @@
 
 # === [ Load config + env from GitHub Gist ] ===
 CONFIG_DIR="/tmp/provisioning"
-CONFIG_YAML_URL="https://github.com/LYTzeng/vastai-forge-scripts/forge_sync_config.yaml"
 CONFIG_SCRIPT_URL="https://github.com/LYTzeng/vastai-forge-scripts/generate_vast_env.sh"
 
 mkdir -p "$CONFIG_DIR"
-curl -fsSL "$CONFIG_YAML_URL" -o "$CONFIG_DIR/forge_sync_config.yaml"
 curl -fsSL "$CONFIG_SCRIPT_URL" -o "$CONFIG_DIR/generate_vast_env.sh"
 chmod +x "$CONFIG_DIR/generate_vast_env.sh"
 
-# Import Bash arrays and FORGE_COMMIT
-eval "$("$CONFIG_DIR/generate_vast_env.sh" "$CONFIG_DIR/forge_sync_config.yaml")"
+if [[ -n $CONFIG_YAML_URL ]]; then
+    curl -fsSL "$CONFIG_YAML_URL" -o "$CONFIG_DIR/forge_sync_config.yaml"
+    # Import Bash arrays and FORGE_COMMIT
+    eval "$("$CONFIG_DIR/generate_vast_env.sh" "$CONFIG_DIR/forge_sync_config.yaml")"
+else
+    echo '\n\033[31m🚨 CONFIG_YAML_URL is empty. Models and extensions will not be downloaded. 🚨\033[0m'
+fi
 
 
 source /venv/main/bin/activate
@@ -24,11 +27,14 @@ PIP_PACKAGES=( )
 
 ### DO NOT EDIT BELOW HERE UNLESS YOU KNOW WHAT YOU ARE DOING ### yeah, i am ;)
 
+SUPERVISORD_CONF_DIR='/etc/supervisor/conf.d'
+
 function provisioning_start() {
     provisioning_print_header
     provisioning_get_apt_packages
-    provisioning_get_extensions
     provisioning_get_pip_packages
+    provisioning_install_filebrowser
+    provisioning_get_extensions
     provisioning_has_valid_hf_token
     provisioning_has_valid_civitai_token
 
@@ -82,6 +88,34 @@ function provisioning_get_pip_packages() {
     if [[ -n $PIP_PACKAGES ]]; then
         pip install --no-cache-dir "${PIP_PACKAGES[@]}"
     fi
+}
+
+function provisioning_install_filebrowser(){
+    echo 'Installing File Browser...'
+    config_dir=/etc/filebrowser/conf.db
+    curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
+    mkdir -p $FORGE_DIR/outputs
+    filebrowser config init -d $config_dir --auth.method=noauth -p=3000 -a=0.0.0.0 --root $FORGE_DIR/outputs --baseurl "" --lockPassword --perm.admin="true" --perm.create="true" --perm.delete="true" --perm.execute="true" --perm.modify="true" --perm.rename="true" --signup="false"
+    filebrowser users add admin '' -d $config_dir
+    cat > $SUPERVISORD_CONF_DIR/filebrowser.conf << UWU
+[program:filebrowser]
+environment=PROC_NAME="%(program_name)s"
+command=filebrowser -d $config_dir
+autostart=true
+autorestart=true
+exitcodes=0
+startsecs=0
+stopasgroup=true
+killasgroup=true
+stopsignal=TERM
+stopwaitsecs=10
+# This is necessary for Vast logging to work alongside the Portal logs (Must output to /dev/stdout)
+stdout_logfile=/dev/stdout
+redirect_stderr=true
+stdout_events_enabled=true
+stdout_logfile_maxbytes=0
+stdout_logfile_backups=0
+UWU
 }
 
 function provisioning_get_extensions() {
@@ -188,4 +222,6 @@ function provisioning_print_end() {
 
 if [[ ! -f /.noprovisioning ]]; then
     provisioning_start
+    supervisorctl reread
+    supervisorctl reload
 fi
