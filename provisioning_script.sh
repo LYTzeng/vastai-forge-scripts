@@ -4,7 +4,7 @@
 
 # === [ Load config + env from GitHub Gist ] ===
 CONFIG_DIR="/tmp/provisioning"
-CONFIG_SCRIPT_URL="https://github.com/LYTzeng/vastai-forge-scripts/generate_vast_env.sh"
+CONFIG_SCRIPT_URL="https://raw.githubusercontent.com/LYTzeng/vastai-forge-scripts/refs/heads/mainline/generate_vast_env.sh"
 
 mkdir -p "$CONFIG_DIR"
 curl -fsSL "$CONFIG_SCRIPT_URL" -o "$CONFIG_DIR/generate_vast_env.sh"
