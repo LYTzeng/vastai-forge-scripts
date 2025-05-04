@@ -33,7 +33,7 @@ while IFS= read -r line || [ -n "$line" ]; do
       vae)            VAE_MODELS+=("$item") ;;
       unet)           UNET_MODELS+=("$item") ;;
       controlnet)     CONTROLNET_MODELS+=("$item") ;;
-      adetailer)      ADETAILER_URLS+=("$item") ;;
+      adetailer)      ADETAILER_MODELS+=("$item") ;;
     esac
   fi
 
@@ -51,6 +51,6 @@ declare -p \
   VAE_MODELS \
   UNET_MODELS \
   CONTROLNET_MODELS \
-  ADETAILER_URLS
+  ADETAILER_MODELS
 
 echo "declare -x FORGE_COMMIT=\"$FORGE_COMMIT\""
