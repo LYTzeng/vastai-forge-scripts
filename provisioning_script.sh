@@ -54,8 +54,7 @@ function provisioning_start() {
     if [[ -n $FORGE_COMMIT ]]; then
         echo "Switching Forge to commit $FORGE_COMMIT"
         cd "$FORGE_DIR"
-        git checkout main
-        git fetch
+        git fetch remote $FORGE_COMMIT
         git checkout $FORGE_COMMIT
 
         # Reinstall dependencies
