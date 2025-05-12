@@ -1,11 +1,14 @@
-# Vast.ai Provisioning Script for Stable Diffusion Forge UI
+# Vast.ai Provisioning Script for SD WebUI reFroge
 
-This repository provides a modified/enhanced [provisioning script](https://github.com/vast-ai/base-image/blob/main/derivatives/pytorch/derivatives/sd-forge/provisioning_scripts/default.sh) for running **[SD WebUI Forge](https://cloud.vast.ai/?ref_id=62897&creator_id=62897&name=SD%20WebUI%20Forge)** Template on [Vast.ai](https://vast.ai).
+This repository provides a modified/enhanced [provisioning script](https://github.com/vast-ai/base-image/blob/main/derivatives/pytorch/derivatives/sd-forge/provisioning_scripts/default.sh) for running [SD Web UI reforge](https://github.com/Panchovix/stable-diffusion-webui-reForge) using **[SD WebUI Forge](https://cloud.vast.ai/?ref_id=62897&creator_id=62897&name=SD%20WebUI%20Forge)** Template on [Vast.ai](https://vast.ai).
+
+Note: This provision script will switch to reForge from the original Forge UI. So it's reForge, not Forge.
 
 ---
 
 ## Features
 
+- Uses reForge instead of Forge UI
 - Provides a better and more image-friendly file browser than original Jupyter's.
 - Deploys Stable Diffusion WebUI Forge with custom extensions, models, LoRAs, and upscalers, by using a remote YAML file.
 - Enhance the original provisioning script which has some unfinished or unused functions.
@@ -74,6 +77,15 @@ esrgan:
 - Put your models/loras/upscalers on Hugging Face or Civitai when possible
 - Use `rsync` separately to push private models from your local machine if needed
 - Don't forget to pass `HF_TOKEN` and `CIVITAI_TOKEN` as environment variables in Vast
+- If you prefer the using Forge than reForge, do the following:
+```sh
+cd /workspace/stable-diffusion-webui-forge
+git checkout main
+# you might need to reinstall dependencies
+pip install -r requirements_versions.txt
+# and restart the daemon
+supervisorctl restart forge
+```
 
 ---
 

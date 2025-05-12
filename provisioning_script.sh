@@ -51,17 +51,25 @@ function provisioning_start() {
     export GIT_CONFIG_GLOBAL=/tmp/temporary-git-config
     git config --file $GIT_CONFIG_GLOBAL --add safe.directory '*'
 
+    cd "$FORGE_DIR"
+    git remote add reForge https://github.com/Panchovix/stable-diffusion-webui-reForge
+    git branch Panchovix/main
+    git checkout Panchovix/main
+    git fetch reForge 
     if [[ -n $FORGE_COMMIT ]]; then
-        echo "Switching Forge to commit $FORGE_COMMIT"
-        cd "$FORGE_DIR"
-        git fetch remote $FORGE_COMMIT
+        echo "Switching Forge to reForge on commit $FORGE_COMMIT..."
         git checkout $FORGE_COMMIT
+        git pull
 
-        # Reinstall dependencies
-        pip install -r requirements-versions.txt
-
-        cd $WORKSPACE
+    else
+        echo "Switching Forge to reForge..."
+        git branch -u reForge/main
+        git stash
+        git pull
     fi
+    # Reinstall dependencies
+    pip install -r requirements_versions.txt
+    cd $WORKSPACE
 
     # Start and exit because webui will probably require a restart
     cd "${FORGE_DIR}"
