@@ -12,4 +12,4 @@ REMOTE_IP="$1"
 SSH_PORT="$2"
 
 # Run rsync
-rsync -avz -e "ssh -p $SSH_PORT" root@"$REMOTE_IP":/workspace/stable-diffusion-webui-forge/outputs/ "$LOCAL_DIR"/
+rsync -avz -e "ssh -p $SSH_PORT" --exclude '*grid*' root@"$REMOTE_IP":/workspace/stable-diffusion-webui-forge/outputs/ "$LOCAL_DIR"/

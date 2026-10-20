@@ -71,6 +71,14 @@ function provisioning_start() {
     pip install -r requirements_versions.txt
     cd $WORKSPACE
 
+    # reForge clones Stability-AI/stablediffusion at launch, but that repo was deleted from
+    # GitHub (2026-10: "fatal: could not read Username" = 404 -> Forge never starts).
+    # Pin a fork that still carries the exact commit reForge expects (cf1d67a6). Export for
+    # this launch and persist for the supervisor-started Forge via the venv activate hook.
+    export STABLE_DIFFUSION_REPO="${STABLE_DIFFUSION_REPO:-https://github.com/w-e-w/stablediffusion.git}"
+    echo "export STABLE_DIFFUSION_REPO=\"$STABLE_DIFFUSION_REPO\"" >> /venv/main/bin/activate
+    echo "export GIT_TERMINAL_PROMPT=0" >> /venv/main/bin/activate
+
     # Start and exit because webui will probably require a restart
     cd "${FORGE_DIR}"
     LD_PRELOAD=libtcmalloc_minimal.so.4 \
@@ -103,7 +111,10 @@ function provisioning_install_filebrowser(){
     curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
     mkdir -p $FORGE_DIR/outputs
     filebrowser config init -d $config_dir --auth.method=noauth -p=3000 -a=0.0.0.0 --root $FORGE_DIR/outputs --baseurl "" --lockPassword --perm.admin="true" --perm.create="true" --perm.delete="true" --perm.execute="true" --perm.modify="true" --perm.rename="true" --signup="false"
-    filebrowser users add admin '' -d $config_dir
+    # filebrowser >= 2.32 rejects passwords under 12 chars even with --auth.method=noauth
+    # (seen: "Error: password is too short, minimum length is 12"), which left no user and
+    # a dead File Browser. noauth never checks the password, so any 12+ char value works.
+    filebrowser users add admin "$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)" -d $config_dir
     cat > $SUPERVISORD_CONF_DIR/filebrowser.conf << UWU
 [program:filebrowser]
 environment=PROC_NAME="%(program_name)s"
@@ -212,10 +223,14 @@ function provisioning_download() {
 
     mkdir -p "$target"
 
+    # --retry: transient resets (seen: curl (56) from Civitai) are retried instead of skipped.
+    # --speed-limit/--speed-time: abort a transfer below 50 KB/s for 60 s (a stalled host)
+    # so the retry kicks in rather than hanging the whole provisioning run.
+    local curl_opts=(-LJO --retry 5 --retry-delay 10 --retry-all-errors --speed-limit 51200 --speed-time 60)
     if [[ -n $auth_token ]]; then
-        (cd "$target" && curl -LJO -H "Authorization: Bearer $auth_token" "$url")
+        (cd "$target" && curl "${curl_opts[@]}" -H "Authorization: Bearer $auth_token" "$url")
     else
-        (cd "$target" && curl -LJO "$url")
+        (cd "$target" && curl "${curl_opts[@]}" "$url")
     fi
 }
 
