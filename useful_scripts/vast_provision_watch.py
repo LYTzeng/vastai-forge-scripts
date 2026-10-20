@@ -6,11 +6,21 @@ Reads provisioning output through `vastai logs` (the Vast base image streams
 
 Classification per poll:
   COMPLETE  "Provisioning complete" seen -> verify downloads vs config YAML, exit 0
-  STALL     provisioning lines unchanged for --stall-secs while not complete
+  STALL     no provisioning progress for --stall-secs while not complete: no new
+            provisioning line AND no in-flight download gained bytes (read from the
+            script's `[dl]` progress ticks, so a slow-but-moving host is not a stall)
   DEFECT    instance exited/errored, or stuck in `loading` > --boot-timeout
   TOKEN     INVALID ... TOKEN banner -> exit 3 (relaunching cannot fix this)
-  URL-FAIL  a `Downloading:` block ended with curl error / tiny body / git fatal
+  URL-FAIL  a `[FAIL] <url> | ...` line (curl error, HTTP error, tiny error-page body)
+            or a `Downloading extension:` followed by `fatal:`
             -> recorded, reported at the end; NOT a relaunch trigger
+
+Log format (provisioning_script.sh, parallel download engine): one `Downloading: <url>`
+when a job starts, then `[OK] <file> | <MB> MB in <s>s (<MB/s> MB/s) | <url>` or
+`[FAIL] <url> | <why>`, `[retry] <url> | ...` for a re-attempt, and
+`[dl] <done>/<total> done | <label> <pct>% <recv>/<total> <speed>/s | ...` every 30 s.
+Logs from the older sequential script (a curl meter per `Downloading:` block) are still
+understood by analyse_downloads_legacy().
 
 STALL and DEFECT: destroy -y, blacklist that machine_id, create a new instance
 from the same template on the best remaining offer, continue. Max --max-relaunch.
@@ -33,10 +43,15 @@ import urllib.request
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 NOISE = re.compile(r"^\[https?://localhost:\d+\]|cloudflared|trycloudflare|quic-go|receive buffer")
 PROV_MARK = re.compile(
-    r"Downloading( extension)?: |Downloading \d+ model|token valid|INVALID .* TOKEN|"
-    r"Switching Forge|Provisioning complete|Cloning into|fatal:|curl: \(|error: pathspec|"
-    r"^\s*100\s+[\d.]+[kMG]?\s+100|Installing File Browser|password is too short"
+    r"Downloading( extension)?: |Downloading \d+ model|Downloads (to|total)|^\[(OK|FAIL|retry|dl)\] |"
+    r"token valid|INVALID .* TOKEN|Switching Forge|Provisioning complete|Cloning into|fatal:|curl: \(|"
+    r"error: pathspec|^\s*100\s+[\d.]+[kMG]?\s+100|Installing File Browser|password is too short"
 )
+OK_LINE = re.compile(r"^\[OK\] (.+?) \| .*? \| (\S+)$")
+FAIL_LINE = re.compile(r"^\[FAIL\] (\S+) \| (.*)$")
+TICK = re.compile(r"^\[dl\] (\d+)/(\d+) done")
+TICK_JOB = re.compile(r"\| (.+?) (\d+)% (\S+)/(\S+) (\S+)/s")
+UNIT = {"": 1.0, "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}
 OFFER_QUERY = ("gpu_name=RTX_4090 rentable=true inet_down>2000 inet_up>2000 "
                "disk_space>100 dph<0.6 reliability>0.98")
 
@@ -99,36 +114,85 @@ def expected_items(cfg_url):
 
 
 def analyse_downloads(lines):
-    """Walk `Downloading: <url>` blocks; a block succeeds if a `100 <size M/G>` line follows
-    before the next block, fails on curl error / only tiny bodies (Civitai error JSON)."""
-    results, cur, big = {}, None, False
-    ext_ok, ext_fail = set(), set()
+    """Per-URL verdicts from `[OK] <file> | ... | <url>` / `[FAIL] <url> | <why>` lines, plus
+    extension clones (`Downloading extension:` followed by `fatal:` = failed). Returns
+    (results{url: bool}, names{url: saved filename}, ext_ok, ext_fail). Falls back to the
+    legacy curl-meter block format when no [OK]/[FAIL] line exists."""
+    results, names, ext_ok, ext_fail = {}, {}, set(), set()
     for i, l in enumerate(lines):
+        m = OK_LINE.match(l)
+        if m:
+            results[m.group(2)] = True
+            names[m.group(2)] = m.group(1)
+            continue
+        m = FAIL_LINE.match(l)
+        if m:
+            results[m.group(1)] = False
+            continue
+        m = re.match(r"Downloading extension: (\S+?)\.{3}", l)
+        if m:
+            block = " ".join(lines[i + 1:block_end(lines, i + 1)])
+            (ext_fail if "fatal:" in block else ext_ok).add(m.group(1))
+    if not results:
+        results = analyse_downloads_legacy(lines)
+    return results, names, ext_ok, ext_fail
+
+
+def block_end(lines, start, limit=60):
+    """Index of the next line that begins another provisioning step, so a verdict only
+    looks at its own block (a fixed window bled the next extension's `fatal:` into this one)."""
+    for j in range(start, min(len(lines), start + limit)):
+        if re.match(r"Downloading( extension)?: |Downloading \d+ model|\[(OK|FAIL)\] |\[.\] .* token valid", lines[j]):
+            return j
+    return min(len(lines), start + limit)
+
+
+def analyse_downloads_legacy(lines):
+    """Sequential-script logs: walk `Downloading: <url>` blocks; a block succeeds if a
+    `100 <size M/G>` meter line follows before the next block, fails on a curl error or
+    only tiny bodies (Civitai error JSON)."""
+    results, cur, big = {}, None, False
+    for l in lines:
         m = re.match(r"Downloading: (\S+)", l)
         if m:
             if cur:
                 results[cur] = big
             cur, big = m.group(1), False
             continue
-        m = re.match(r"Downloading extension: (\S+?)\.{3}", l)
-        if m:
+        if l.startswith("Downloading extension: "):
             if cur:
                 results[cur] = big
                 cur = None
-            repo = m.group(1)
-            nxt = " ".join(lines[i + 1:i + 6])
-            (ext_fail if "fatal:" in nxt else ext_ok).add(repo)
             continue
         if cur:
             if re.match(r"\s*100\s+[\d.]+[MG]\s+100", l):
                 big = True
             if l.startswith("curl: ("):
-                big = False
                 results[cur] = False
                 cur = None
     if cur:
         results[cur] = big
-    return results, ext_ok, ext_fail
+    return results
+
+
+def to_bytes(s):
+    m = re.match(r"([\d.]+)([kMGT]?)$", s)
+    return float(m.group(1)) * UNIT[m.group(2)] if m else 0.0
+
+
+def tick_progress(lines, seen):
+    """Fold `[dl]` progress ticks into seen{label: max bytes received}; True if any in-flight
+    download gained bytes since the previous poll (a retry restarting from 0 does not count)."""
+    gained = False
+    for l in lines:
+        if not TICK.match(l):
+            continue
+        for m in TICK_JOB.finditer(l):
+            label, received = m.group(1), to_bytes(m.group(3))
+            if received > seen.get(label, -1.0):
+                seen[label] = received
+                gained = True
+    return gained
 
 
 def best_offer(blacklist):
@@ -204,6 +268,7 @@ def main():
     log("watching instance %s (expected %s items from config)" % (iid, exp_total or "?"))
 
     last_fp, last_change, boot_start = None, time.time(), time.time()
+    dl_seen = {}   # label -> max bytes received, from [dl] ticks; reset per instance
     while True:
         st = instance_state(iid)
         actual = st.get("actual_status")
@@ -230,26 +295,35 @@ def main():
                 return 3
 
             if "Provisioning complete" in text:
-                results, ext_ok, ext_fail = analyse_downloads(lines)
+                results, names, ext_ok, ext_fail = analyse_downloads(lines)
                 failed = sorted(u for u, ok in results.items() if not ok)
+                undecoded = sorted(n for n in names.values() if re.search(r"%[0-9A-Fa-f]{2}", n))
+                retries = sum(1 for l in plines if l.startswith("[retry] "))
                 state.update({"phase": "complete", "downloads_ok": sum(results.values()),
-                              "downloads_failed": failed, "extensions_ok": len(ext_ok),
-                              "extensions_failed": sorted(ext_fail),
+                              "downloads_failed": failed, "download_retries": retries,
+                              "saved_names": sorted(names.values()), "undecoded_names": undecoded,
+                              "extensions_ok": len(ext_ok), "extensions_failed": sorted(ext_fail),
                               "filebrowser_error": "password is too short" in text,
                               "expected_items": exp_total})
-                log("COMPLETE: %d/%d downloads ok, %d failed; extensions %d ok, %d failed" % (
-                    sum(results.values()), len(results), len(failed), len(ext_ok), len(ext_fail)))
+                log("COMPLETE: %d/%d downloads ok, %d failed, %d retried; extensions %d ok, %d failed" % (
+                    sum(results.values()), len(results), len(failed), retries, len(ext_ok), len(ext_fail)))
                 for u in failed:
                     log("  FAILED download: " + u)
                 for r in sorted(ext_fail):
                     log("  FAILED extension: " + r)
+                for n in undecoded:
+                    log("  UNDECODED filename on disk (old script?): " + n)
                 if state["filebrowser_error"]:
                     log("  File Browser user creation failed (password too short) - script bug")
                 save()
                 return 0 if not failed and not ext_fail else 1
 
-            fp = hash(text)
-            if fp != last_fp:
+            # Progress = a new provisioning line (ticks excluded) OR an in-flight download
+            # gaining bytes per the [dl] ticks. Ticks alone never count: a host that keeps
+            # resetting shows ticks that restart from 0, which must still read as a stall.
+            fp = hash("\n".join(l for l in plines if not TICK.match(l)))
+            moved = tick_progress(plines, dl_seen)
+            if fp != last_fp or moved:
                 last_fp, last_change = fp, time.time()
                 state["phase"] = "provisioning"
             elif time.time() - last_change > a.stall_secs:
@@ -272,6 +346,7 @@ def main():
             if not iid:
                 state["phase"] = "launch-failed"; save(); return 2
             last_fp, last_change, boot_start = None, time.time(), time.time()
+            dl_seen = {}
             log("relaunched as %s (relaunch %d/%d)" % (iid, state["relaunches"], a.max_relaunch))
 
         save()
