@@ -79,6 +79,8 @@ function provisioning_start() {
     echo "export STABLE_DIFFUSION_REPO=\"$STABLE_DIFFUSION_REPO\"" >> /venv/main/bin/activate
     echo "export GIT_TERMINAL_PROMPT=0" >> /venv/main/bin/activate
 
+    provisioning_apply_forge_settings
+
     # Start and exit because webui will probably require a restart
     cd "${FORGE_DIR}"
     LD_PRELOAD=libtcmalloc_minimal.so.4 \
@@ -91,6 +93,30 @@ function provisioning_start() {
             --exit
 
     provisioning_print_end
+}
+
+function provisioning_apply_forge_settings() {
+    # Settings > Extra Networks > "When adding to prompt, refer to Lora by": default is
+    # "Alias from file", which makes <lora:...> tags use the metadata alias instead of the
+    # filename, so saved prompts/EXIF written with filenames stop matching after a fresh
+    # install. Pre-seed config.json (merged, so anything already there is kept).
+    local cfg="${FORGE_DIR}/config.json"
+    echo "Applying Forge settings to ${cfg}..."
+    FORGE_CONFIG_JSON="$cfg" python - << 'PY'
+import json, os
+path = os.environ["FORGE_CONFIG_JSON"]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    cfg = {}
+cfg.update({
+    "lora_preferred_name": "Filename",
+})
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=4)
+print("  lora_preferred_name = Filename")
+PY
 }
 
 function provisioning_get_apt_packages() {
