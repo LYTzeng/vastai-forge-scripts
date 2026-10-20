@@ -232,6 +232,17 @@ function provisioning_download() {
     else
         (cd "$target" && curl "${curl_opts[@]}" "$url")
     fi
+
+    # curl -LJO keeps percent-escapes from Content-Disposition verbatim, e.g. HF serves
+    # "kazukoai-illust-kanav3(1).safetensors" as "...kanav3%281%29.safetensors", so
+    # saved prompts/EXIF referencing <lora:kazukoai-illust-kanav3(1):1> would not match.
+    # Decode %XX sequences in the saved filenames.
+    local f decoded
+    for f in "$target"/*%[0-9A-Fa-f][0-9A-Fa-f]*; do
+        [[ -e "$f" ]] || continue
+        decoded="$(printf '%b' "${f//%/\\x}")"
+        [[ "$decoded" != "$f" && ! -e "$decoded" ]] && mv -v -- "$f" "$decoded"
+    done
 }
 
 function provisioning_print_header() {
